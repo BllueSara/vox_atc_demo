@@ -7,8 +7,8 @@ import 'ffmpeg_locator.dart';
 class AudioDevicesService {
   String? lastRaw; // optional: helps debugging
 
-  /// Lists DirectShow audio devices using ffmpeg (Windows).
-  /// Robust parsing across different ffmpeg builds.
+  /// Lists DirectShow **audio** input devices using ffmpeg (Windows).
+  /// Video devices (e.g. Integrated Camera) are never included.
   Future<List<String>> listWindowsMics() async {
     final args = [
       '-hide_banner',
@@ -30,7 +30,6 @@ class AudioDevicesService {
     final errBuf = StringBuffer();
     p.stderr.transform(utf8.decoder).listen(errBuf.write);
 
-    // consume stdout (not needed)
     p.stdout.transform(utf8.decoder).listen((_) {});
 
     // ffmpeg often exits with code 1 here — that's OK
@@ -39,86 +38,92 @@ class AudioDevicesService {
     final raw = errBuf.toString();
     lastRaw = raw;
 
+    return _parseAudioDevices(raw);
+  }
+
+  /// First available Windows audio input, or null if none found.
+  Future<String?> firstWindowsMic() async {
+    final mics = await listWindowsMics();
+    return mics.isEmpty ? null : mics.first;
+  }
+
+  List<String> _parseAudioDevices(String raw) {
     final lines = raw.split('\n');
-
-    // 1) Primary parse: between "audio devices" header and next header
+    final videoNames = <String>{};
     final audioNames = <String>[];
-    bool inAudio = false;
 
+    // Collect explicit (video) devices so they can never leak in via fallbacks.
     for (final rawLine in lines) {
       final line = rawLine.trim();
+      if (!_isVideoLine(line)) continue;
+      final name = _quotedDeviceName(line);
+      if (name != null) videoNames.add(name);
+    }
 
-      final isAudioHeader =
-          line.toLowerCase().contains('directshow audio devices');
-      final isVideoHeader =
-          line.toLowerCase().contains('directshow video devices');
-
-      if (isAudioHeader) {
-        inAudio = true;
-        continue;
-      }
-      if (inAudio && isVideoHeader) {
-        inAudio = false;
-        continue;
-      }
-
-      if (!inAudio) continue;
-
-      // Skip “Alternative name”
+    // ffmpeg 8+: `"Device Name" (audio)` / `(video)` on each line
+    for (final rawLine in lines) {
+      final line = rawLine.trim();
+      if (!_isAudioLine(line)) continue;
       if (line.toLowerCase().contains('alternative name')) continue;
 
-      // Grab any quoted device name:  "Device Name"
-      final m = RegExp(r'"([^"]+)"').firstMatch(line);
-      if (m != null) {
-        final name = m.group(1)!.trim();
-        if (name.isNotEmpty) audioNames.add(name);
+      final name = _quotedDeviceName(line);
+      if (name != null && !videoNames.contains(name)) {
+        audioNames.add(name);
       }
     }
 
-    // 2) Fallback parse: if header not found, grab ALL quoted names
-    // from dshow lines (excluding "Alternative name") and return them.
-    final fallbackNames = <String>[];
-    if (audioNames.isEmpty) {
-      for (final rawLine in lines) {
-        final line = rawLine.trim();
-        if (!line.toLowerCase().contains('dshow')) continue;
-        if (line.toLowerCase().contains('alternative name')) continue;
+    if (audioNames.isNotEmpty) {
+      return _dedupe(audioNames);
+    }
 
-        final m = RegExp(r'"([^"]+)"').firstMatch(line);
-        if (m != null) {
-          final name = m.group(1)!.trim();
-          if (name.isNotEmpty) fallbackNames.add(name);
-        }
+    // Legacy: between "DirectShow audio devices" and "DirectShow video devices"
+    bool inAudioSection = false;
+    for (final rawLine in lines) {
+      final line = rawLine.trim();
+      final lower = line.toLowerCase();
+
+      if (lower.contains('directshow audio devices')) {
+        inAudioSection = true;
+        continue;
+      }
+      if (inAudioSection && lower.contains('directshow video devices')) {
+        break;
+      }
+      if (!inAudioSection) continue;
+      if (_isVideoLine(line)) continue;
+      if (line.toLowerCase().contains('alternative name')) continue;
+
+      final name = _quotedDeviceName(line);
+      if (name != null && !videoNames.contains(name)) {
+        audioNames.add(name);
       }
     }
 
-    // 3) ffmpeg 8+: `"Device Name" (audio)` without legacy DirectShow headers
-    final ffmpeg8Names = <String>[];
-    if (audioNames.isEmpty && fallbackNames.isEmpty) {
-      for (final rawLine in lines) {
-        final line = rawLine.trim();
-        if (!line.contains('(audio)')) continue;
-        if (line.toLowerCase().contains('alternative name')) continue;
+    return _dedupe(audioNames);
+  }
 
-        final m = RegExp(r'"([^"]+)"').firstMatch(line);
-        if (m != null) {
-          final name = m.group(1)!.trim();
-          if (name.isNotEmpty) ffmpeg8Names.add(name);
-        }
-      }
-    }
+  bool _isAudioLine(String line) {
+    final lower = line.toLowerCase();
+    return lower.contains('(audio)');
+  }
 
-    final out = audioNames.isNotEmpty
-        ? audioNames
-        : (fallbackNames.isNotEmpty ? fallbackNames : ffmpeg8Names);
+  bool _isVideoLine(String line) {
+    final lower = line.toLowerCase();
+    return lower.contains('(video)');
+  }
 
-    // De-duplicate while keeping order
+  String? _quotedDeviceName(String line) {
+    final m = RegExp(r'"([^"]+)"').firstMatch(line);
+    final name = m?.group(1)?.trim();
+    return (name != null && name.isNotEmpty) ? name : null;
+  }
+
+  List<String> _dedupe(List<String> names) {
     final seen = <String>{};
     final deduped = <String>[];
-    for (final n in out) {
+    for (final n in names) {
       if (seen.add(n)) deduped.add(n);
     }
-
     return deduped;
   }
 }

@@ -27,28 +27,15 @@ Future<void> _initVoiceServices() async {
 
   if (Platform.isMacOS) {
     settings = settings.copyWith(micName: _macDefaultMic);
-  } else if (Platform.isWindows && settings.micName.trim().isEmpty) {
-    final devices = AudioDevicesService();
-    final mics = await devices.listWindowsMics();
-    if (mics.isNotEmpty) {
-      settings = settings.copyWith(micName: mics.first);
-      debugPrint('AudioCapture: using default Windows mic "${mics.first}"');
+  } else if (Platform.isWindows) {
+    final mic = await _resolveWindowsMicAtStartup(settings.micName);
+    if (mic != null) {
+      settings = settings.copyWith(micName: mic);
     } else {
       debugPrint(
-        'AudioCapture: no microphones found — bundled ffmpeg missing or '
-        'microphone unavailable',
+        'AudioCapture: no audio microphones found — bundled ffmpeg missing '
+        'or microphone unavailable',
       );
-    }
-  } else if (Platform.isWindows) {
-    final devices = AudioDevicesService();
-    final mics = await devices.listWindowsMics();
-    if (mics.isNotEmpty && !mics.contains(settings.micName)) {
-      final fallback = mics.first;
-      debugPrint(
-        'AudioCapture: saved mic "${settings.micName}" not found, '
-        'using "$fallback"',
-      );
-      settings = settings.copyWith(micName: fallback);
     }
   }
 
@@ -65,6 +52,29 @@ Future<void> _initVoiceServices() async {
 
   PttHandler.instance.onPTTStart = _onPttStart;
   PttHandler.instance.onPTTEnd = _onPttEnd;
+}
+
+/// Picks a saved audio mic or the first ffmpeg (audio) device. Never video.
+Future<String?> _resolveWindowsMicAtStartup(String savedMic) async {
+  final mics = await AudioDevicesService().listWindowsMics();
+  if (mics.isEmpty) return null;
+
+  final trimmed = savedMic.trim();
+  if (trimmed.isNotEmpty && mics.contains(trimmed)) {
+    debugPrint('AudioCapture: using Windows mic "$trimmed"');
+    return trimmed;
+  }
+
+  final selected = mics.first;
+  if (trimmed.isNotEmpty) {
+    debugPrint(
+      'AudioCapture: saved mic "$trimmed" is not an audio device — '
+      'selected "$selected"',
+    );
+  } else {
+    debugPrint('AudioCapture: auto-selected Windows mic "$selected"');
+  }
+  return selected;
 }
 
 void _onPttStart() {

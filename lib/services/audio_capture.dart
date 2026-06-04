@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import 'audio_devices_service.dart';
 import 'audio_settings_service.dart';
 import 'ffmpeg_locator.dart';
 
@@ -19,6 +20,7 @@ class AudioCapture {
   static const int sampleRate = 16000;
 
   AudioSettings? _settings;
+  String? _effectiveMic;
   Process? _proc;
   String? _outputPath;
   bool _recording = false;
@@ -27,15 +29,20 @@ class AudioCapture {
 
   Future<void> init(AudioSettings settings) async {
     _settings = settings;
+    if (Platform.isWindows) {
+      _effectiveMic = await _resolveWindowsMic(settings.micName);
+    } else {
+      _effectiveMic = settings.micName.trim();
+    }
   }
 
   /// Starts ffmpeg recording. No-op if already recording or input is not configured.
   Future<void> start() async {
     if (_recording) return;
 
-    final mic = _settings?.micName.trim() ?? '';
+    final mic = await _micForCapture();
     if (mic.isEmpty) {
-      debugPrint('AudioCapture: no microphone configured');
+      debugPrint('AudioCapture: no audio microphone available');
       return;
     }
 
@@ -115,6 +122,39 @@ class AudioCapture {
       await stop();
     }
     _settings = null;
+    _effectiveMic = null;
+  }
+
+  Future<String> _micForCapture() async {
+    if (Platform.isWindows) {
+      if (_effectiveMic == null || _effectiveMic!.isEmpty) {
+        _effectiveMic = await _resolveWindowsMic(_settings?.micName ?? '');
+      }
+      return _effectiveMic ?? '';
+    }
+    return _settings?.micName.trim() ?? '';
+  }
+
+  /// Uses [savedMic] from settings when it is a known audio device; otherwise
+  /// the first audio device from ffmpeg (never video/camera devices).
+  Future<String?> _resolveWindowsMic(String savedMic) async {
+    final mics = await AudioDevicesService().listWindowsMics();
+    if (mics.isEmpty) return null;
+
+    final trimmed = savedMic.trim();
+    if (trimmed.isNotEmpty && mics.contains(trimmed)) {
+      return trimmed;
+    }
+
+    if (trimmed.isNotEmpty) {
+      debugPrint(
+        'AudioCapture: "$trimmed" is not an audio input — '
+        'using "${mics.first}"',
+      );
+    } else {
+      debugPrint('AudioCapture: auto-selected Windows mic "${mics.first}"');
+    }
+    return mics.first;
   }
 
   List<String> _buildFfmpegArgs(String mic, String outputPath) {
