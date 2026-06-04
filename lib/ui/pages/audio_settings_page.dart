@@ -283,7 +283,7 @@ class _AudioSettingsPageState extends State<AudioSettingsPage> {
           ),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
-            value: (_settings.micName.isNotEmpty &&
+            initialValue: (_settings.micName.isNotEmpty &&
                     _mics.contains(_settings.micName))
                 ? _settings.micName
                 : null,
@@ -365,7 +365,7 @@ class _AudioSettingsPageState extends State<AudioSettingsPage> {
           ),
           const SizedBox(height: 8),
           DropdownButtonFormField<WhisperProfile>(
-            value: _settings.profile,
+            initialValue: _settings.profile,
             items: const [
               DropdownMenuItem(
                 value: WhisperProfile.fast,
@@ -470,8 +470,10 @@ class MicLevelMeter extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
           child: Container(
             height: 14,
-            color:
-                Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.7),
+            color: Theme.of(context)
+                .colorScheme
+                .surfaceContainerHighest
+                .withValues(alpha: 0.7),
             child: Align(
               alignment: Alignment.centerLeft,
               child: FractionallySizedBox(

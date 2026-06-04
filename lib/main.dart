@@ -28,16 +28,40 @@ Future<void> _initVoiceServices() async {
   if (Platform.isMacOS) {
     settings = settings.copyWith(micName: _macDefaultMic);
   } else if (Platform.isWindows && settings.micName.trim().isEmpty) {
-    final mics = await AudioDevicesService().listWindowsMics();
+    final devices = AudioDevicesService();
+    final mics = await devices.listWindowsMics();
     if (mics.isNotEmpty) {
       settings = settings.copyWith(micName: mics.first);
       debugPrint('AudioCapture: using default Windows mic "${mics.first}"');
+    } else {
+      debugPrint(
+        'AudioCapture: no microphones found — bundled ffmpeg missing or '
+        'microphone unavailable',
+      );
+    }
+  } else if (Platform.isWindows) {
+    final devices = AudioDevicesService();
+    final mics = await devices.listWindowsMics();
+    if (mics.isNotEmpty && !mics.contains(settings.micName)) {
+      final fallback = mics.first;
+      debugPrint(
+        'AudioCapture: saved mic "${settings.micName}" not found, '
+        'using "$fallback"',
+      );
+      settings = settings.copyWith(micName: fallback);
     }
   }
 
   await PttHandler.instance.init(settings);
   await AudioCapture.instance.init(settings);
   await SpeechEngine.instance.start();
+
+  if (SpeechEngine.instance.isReady) {
+    pttStatus.value = 'Ready - hold Space or Hold to Talk';
+  } else {
+    pttStatus.value =
+        SpeechEngine.instance.lastError ?? 'Speech engine failed to start';
+  }
 
   PttHandler.instance.onPTTStart = _onPttStart;
   PttHandler.instance.onPTTEnd = _onPttEnd;
@@ -83,9 +107,12 @@ Future<void> _onRecordingSaved(String path) async {
     print('Transcribed: $text');
     transcript.value = text;
     pttStatus.value = 'Transcription complete';
+  } else if (SpeechEngine.instance.lastError != null) {
+    transcript.value = '(transcription error)';
+    pttStatus.value = SpeechEngine.instance.lastError!;
   } else {
-    transcript.value = '(no transcription)';
-    pttStatus.value = 'Transcription failed';
+    transcript.value = '(no speech detected)';
+    pttStatus.value = 'No speech detected — check microphone';
   }
 }
 

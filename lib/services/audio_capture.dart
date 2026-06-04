@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import 'audio_settings_service.dart';
+import 'ffmpeg_locator.dart';
 
 /// Captures microphone audio to a temporary WAV file via ffmpeg.
 ///
@@ -52,7 +53,12 @@ class AudioCapture {
     if (args.isEmpty) return;
 
     try {
-      _proc = await Process.start('ffmpeg', args, runInShell: true);
+      final ffmpeg = await FfmpegLocator.executable();
+      _proc = await Process.start(
+        ffmpeg,
+        args,
+        runInShell: ffmpeg == 'ffmpeg',
+      );
       _recording = true;
 
       _proc!.stderr.listen((data) {

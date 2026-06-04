@@ -6,6 +6,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import 'bundle_locator.dart';
+
 /// Runs a persistent faster-whisper server ([python/whisper_server.py]).
 class SpeechEngine {
   SpeechEngine._();
@@ -30,7 +32,17 @@ class SpeechEngine {
   bool _started = false;
   bool _starting = false;
   bool _busy = false;
+  String? _lastError;
+
+  /// Whether the persistent whisper server is running.
+  bool get isReady => _started;
+
+  /// Last startup/transcription error message, if any.
+  String? get lastError => _lastError;
+
   final Queue<Completer<void>> _busyWaiters = Queue<Completer<void>>();
+  final List<String> _stderrLines = [];
+  int? _exitCode;
 
   /// Starts the Python whisper server and waits until the model is loaded.
   Future<void> start() async {
@@ -42,10 +54,13 @@ class SpeechEngine {
 
     _starting = true;
     _readyCompleter = Completer<void>();
+    _stderrLines.clear();
+    _exitCode = null;
 
-    final script = _resolveScriptPath();
-    if (script == null) {
+    final scriptPath = _resolveScriptPath();
+    if (scriptPath == null) {
       _starting = false;
+      _lastError = 'whisper_server.py not found next to the app';
       debugPrint(
         'SpeechEngine: whisper_server.py not found (expected $_scriptRelative '
         'under project root; executable=${Platform.resolvedExecutable}, '
@@ -55,22 +70,22 @@ class SpeechEngine {
     }
 
     try {
-      final python = await _resolvePythonExecutable();
+      final bundleRoot = _projectRootForScript(scriptPath);
+      final python = await _resolvePythonExecutable(bundleRoot);
       if (python == null) {
         _starting = false;
-        debugPrint(
-          'SpeechEngine: Python not found '
-          '(macOS: python3.11, Windows: python3.11 / python3 / python)',
-        );
+        _lastError ??= 'Bundled Python runtime not found';
+        debugPrint('SpeechEngine: Python not found — $_lastError');
         return;
       }
       _pythonExecutable = python;
 
       _proc = await Process.start(
         python,
-        [script],
-        runInShell: Platform.isWindows,
-        workingDirectory: _projectRootForScript(script),
+        ['-u', scriptPath],
+        runInShell: _useShellForPython(python),
+        workingDirectory: bundleRoot,
+        environment: _processEnvironment(bundleRoot),
       );
 
       _stdin = _proc!.stdin;
@@ -86,6 +101,7 @@ class SpeechEngine {
           .listen(_onStderrLine, onError: _onProcessError);
 
       _proc!.exitCode.then((code) {
+        _exitCode = code;
         if (code != 0) {
           debugPrint('SpeechEngine: whisper_server exited with code $code');
         }
@@ -100,9 +116,11 @@ class SpeechEngine {
       );
 
       _started = true;
-      debugPrint('SpeechEngine: persistent server ready ($script)');
+      _lastError = null;
+      debugPrint('SpeechEngine: persistent server ready ($scriptPath)');
     } catch (e) {
-      debugPrint('SpeechEngine: failed to start server: $e');
+      _lastError = _lastError ?? _formatStartupFailure('$e');
+      debugPrint('SpeechEngine: failed to start server: $_lastError');
       await _shutdownProcess();
     } finally {
       _starting = false;
@@ -121,6 +139,7 @@ class SpeechEngine {
       await start();
     }
     if (!_started || _stdin == null) {
+      _lastError ??= 'Speech engine is not running';
       return '';
     }
 
@@ -140,6 +159,7 @@ class SpeechEngine {
 
       return lines.join(' ').trim();
     } catch (e) {
+      _lastError = '$e';
       debugPrint('SpeechEngine: transcribe error: $e');
       return '';
     } finally {
@@ -161,15 +181,20 @@ class SpeechEngine {
   }
 
   void _onStderrLine(String line) {
-    if (line == _readySignal) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) return;
+
+    _stderrLines.add(trimmed);
+    if (trimmed == _readySignal) {
       if (_readyCompleter != null && !_readyCompleter!.isCompleted) {
         _readyCompleter!.complete();
       }
       return;
     }
-    if (line.isNotEmpty) {
-      debugPrint('SpeechEngine: $line');
+    if (trimmed.startsWith('ERROR:')) {
+      _lastError = trimmed;
     }
+    debugPrint('SpeechEngine: $trimmed');
   }
 
   void _onProcessError(Object error) {
@@ -185,9 +210,10 @@ class SpeechEngine {
     }
     _busyWaiters.clear();
     if (_readyCompleter != null && !_readyCompleter!.isCompleted) {
-      _readyCompleter!.completeError(
-        StateError('SpeechEngine: server exited before READY'),
+      _lastError = _formatStartupFailure(
+        'Whisper server stopped before it was ready',
       );
+      _readyCompleter!.completeError(StateError(_lastError!));
     }
     _proc = null;
     _stdin = null;
@@ -268,33 +294,86 @@ class SpeechEngine {
     return null;
   }
 
-  String? _projectRootForScript(String scriptPath) {
+  String _projectRootForScript(String scriptPath) {
     return p.dirname(p.dirname(p.normalize(scriptPath)));
   }
 
-  /// macOS: `python3.11`. Windows: first available of `python3.11`, `python3`, `python`.
-  Future<String?> _resolvePythonExecutable() async {
+  /// Portable bundle first, then system Python on PATH (dev machines only).
+  Future<String?> _resolvePythonExecutable(String bundleRoot) async {
     if (_pythonExecutable != null) return _pythonExecutable;
+
+    final bundled = BundleLocator.pythonExecutableForRoot(bundleRoot);
+    if (bundled != null) {
+      if (await _pythonCanRunWhisper(bundled, bundleRoot)) {
+        return bundled;
+      }
+      _lastError = _formatStartupFailure(
+        'Bundled Python failed to load faster-whisper',
+      );
+      return null;
+    }
 
     final candidates = Platform.isMacOS
         ? const ['python3.11']
-        : const ['python3.11', 'python3', 'python'];
+        : const ['python', 'python3', 'python3.11'];
 
     for (final candidate in candidates) {
-      try {
-        final result = await Process.run(
-          candidate,
-          ['--version'],
-          runInShell: Platform.isWindows,
-        );
-        if (result.exitCode == 0) {
-          return candidate;
-        }
-      } catch (_) {
-        // Try next candidate.
+      if (await _pythonCanRunWhisper(candidate, bundleRoot)) {
+        return candidate;
       }
     }
     return null;
+  }
+
+  Future<bool> _pythonCanRunWhisper(
+    String executable,
+    String bundleRoot,
+  ) async {
+    try {
+      final result = await Process.run(
+        executable,
+        ['-u', '-c', 'from faster_whisper import WhisperModel; print("OK")'],
+        environment: _processEnvironment(bundleRoot),
+        runInShell: _useShellForPython(executable),
+      );
+      final out = '${result.stdout}${result.stderr}'.trim();
+      if (result.exitCode != 0) return false;
+      return out.contains('OK');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  String _formatStartupFailure(String headline) {
+    final details = _stderrLines
+        .where((line) => line.startsWith('ERROR:') || line.startsWith('Loading'))
+        .toList();
+    if (_exitCode == -1073741819) {
+      details.add(
+        'native crash (0xC0000005) - run runtime\\Install_VC_Runtime.bat',
+      );
+    } else if (_exitCode != null && _exitCode != 0) {
+      details.add('exit code $_exitCode');
+    }
+    if (details.isEmpty) {
+      return headline;
+    }
+    return '$headline (${details.join('; ')})';
+  }
+
+  bool _useShellForPython(String executable) {
+    if (!Platform.isWindows) return false;
+    return !p.isAbsolute(executable);
+  }
+
+  Map<String, String> _processEnvironment(String bundleRoot) {
+    if (BundleLocator.pythonExecutableForRoot(bundleRoot) != null) {
+      return BundleLocator.processEnvironmentForRoot(bundleRoot);
+    }
+
+    final env = Map<String, String>.from(Platform.environment);
+    env['HF_HUB_DISABLE_SYMLINKS'] = '1';
+    return env;
   }
 
   Iterable<String> _projectRootCandidates() sync* {

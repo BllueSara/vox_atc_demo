@@ -2,6 +2,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'ffmpeg_locator.dart';
+
 class AudioDevicesService {
   String? lastRaw; // optional: helps debugging
 
@@ -18,10 +20,11 @@ class AudioDevicesService {
       'dummy',
     ];
 
+    final ffmpeg = await FfmpegLocator.executable();
     final p = await Process.start(
-      'ffmpeg',
+      ffmpeg,
       args,
-      runInShell: true,
+      runInShell: ffmpeg == 'ffmpeg',
     );
 
     final errBuf = StringBuffer();
@@ -89,7 +92,25 @@ class AudioDevicesService {
       }
     }
 
-    final out = audioNames.isNotEmpty ? audioNames : fallbackNames;
+    // 3) ffmpeg 8+: `"Device Name" (audio)` without legacy DirectShow headers
+    final ffmpeg8Names = <String>[];
+    if (audioNames.isEmpty && fallbackNames.isEmpty) {
+      for (final rawLine in lines) {
+        final line = rawLine.trim();
+        if (!line.contains('(audio)')) continue;
+        if (line.toLowerCase().contains('alternative name')) continue;
+
+        final m = RegExp(r'"([^"]+)"').firstMatch(line);
+        if (m != null) {
+          final name = m.group(1)!.trim();
+          if (name.isNotEmpty) ffmpeg8Names.add(name);
+        }
+      }
+    }
+
+    final out = audioNames.isNotEmpty
+        ? audioNames
+        : (fallbackNames.isNotEmpty ? fallbackNames : ffmpeg8Names);
 
     // De-duplicate while keeping order
     final seen = <String>{};

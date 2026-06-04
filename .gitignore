@@ -11,6 +11,8 @@
 .svn/
 .swiftpm/
 migrate_working_dir/
+__MACOSX/
+stderr_out.txt
 
 # IntelliJ related
 *.iml
@@ -27,11 +29,18 @@ migrate_working_dir/
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
 /build/
+/dist/
 /coverage/
+
+# Generated Flutter platform ephemeral files (runner sources stay tracked)
+windows/flutter/ephemeral/
+macos/Flutter/ephemeral/
+linux/flutter/ephemeral/
 
 # Symbolication related
 app.*.symbols
