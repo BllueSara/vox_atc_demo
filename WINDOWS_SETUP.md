@@ -1,296 +1,128 @@
 # VoxATC — Windows Setup Guide
 
-This guide walks through setting up the VoxATC demo on **Windows Desktop** for PTT capture and local speech recognition.
-
-**Production target:** Windows  
-**Development:** macOS is also supported with the same codebase (`Platform` checks)
+VoxATC runs on **Windows Desktop**. Use **Section 1** to test the ready-made app. Use **Section 2** if you are building or integrating from source.
 
 ---
 
-## 1. Install Flutter for Windows
+## Section 1 — For Testing (dist/ folder)
 
-Follow the official guide:
+For the client who wants to test without installing anything.
 
-https://docs.flutter.dev/get-started/install/windows
+1. Download **VoxATC-Windows.zip**
+2. Extract the entire folder (e.g. to `Desktop\VoxATC-Windows`)
+3. Run **`runtime\Install_VC_Runtime.bat`** (one time only)
+4. Double-click **`Start VoxATC.bat`**
+5. Wait ~30 seconds on first launch while Whisper loads
+6. The app opens — **press and hold Space** to talk, then release
 
-After installation, open **PowerShell** or **Command Prompt** and run:
+**No Python, no Flutter, no ffmpeg needed.**
 
-```powershell
-flutter doctor
-```
+The portable folder includes everything: the app, Whisper model, Python runtime, and ffmpeg.
 
-Enable **Windows desktop** if needed:
+### Quick test
 
-```powershell
-flutter config --enable-windows-desktop
-```
+1. Hold **Space** and say: *"Gulf Air 387, hold position"*
+2. Release **Space**
+3. The transcript should appear on screen within a few seconds
 
----
-
-## 2. Install Visual Studio (Desktop development with C++)
-
-Flutter on Windows requires the **Desktop development with C++** workload.
-
-Download Visual Studio:
-
-https://visualstudio.microsoft.com/
-
-During installation, select:
-
-- **Desktop development with C++**
-- Windows 10/11 SDK (latest available)
-
-Run `flutter doctor` again and confirm the Visual Studio section shows no errors.
+You can also use the **Hold to Talk** button in the app.
 
 ---
 
-## 3. Install Python 3.11
+## Section 2 — For Development (source code)
 
-Download Python 3.11:
+For developers who want to build or integrate VoxATC into their own app.
 
-https://www.python.org/downloads/
+### Prerequisites
 
-During setup:
+1. **Install Flutter for Windows**  
+   https://flutter.dev/docs/get-started/install/windows
 
-- Check **Add python.exe to PATH**
-- Note the install location (e.g. `C:\Users\<you>\AppData\Local\Programs\Python\Python311\`)
+   Then verify:
 
-Verify in a **new** terminal:
+   ```powershell
+   flutter doctor
+   flutter config --enable-windows-desktop
+   ```
 
-```powershell
-python --version
-python3.11 --version
-```
+2. **Install Visual Studio** with **Desktop development with C++**  
+   https://visualstudio.microsoft.com/
 
-At least one of `python`, `python3`, or `python3.11` must work. VoxATC tries them in that order on Windows.
+3. **Install Python 3.11**  
+   https://www.python.org/downloads/  
+   Check **Add python.exe to PATH** during setup.
 
----
+4. **Install faster-whisper**
 
-## 4. Install faster-whisper
+   ```powershell
+   pip install faster-whisper
+   ```
 
-```powershell
-python -m pip install faster-whisper
-```
+5. **Install ffmpeg** and add it to **PATH**  
+   https://ffmpeg.org/download.html
 
-Or with Python 3.11 explicitly:
+   Verify:
 
-```powershell
-python3.11 -m pip install faster-whisper
-```
+   ```powershell
+   ffmpeg -version
+   python --version
+   python -c "from faster_whisper import WhisperModel; print('OK')"
+   ```
 
-Verify:
-
-```powershell
-python -c "from faster_whisper import WhisperModel; print('OK')"
-```
-
-The first transcription run downloads the `small.en` model (~150 MB).
-
----
-
-## 5. Install ffmpeg
-
-Download a Windows build:
-
-https://ffmpeg.org/download.html
-
-(Gyan.dev or BtbN builds are commonly used.)
-
-1. Extract the archive (e.g. to `C:\ffmpeg`)
-2. Add the **`bin`** folder to your system **PATH**  
-   Example: `C:\ffmpeg\bin`
-3. Open a **new** terminal and verify:
+### Run from source
 
 ```powershell
-ffmpeg -version
-```
-
-VoxATC calls `ffmpeg` directly (must be on PATH).
-
-### List microphones (optional)
-
-```powershell
-ffmpeg -hide_banner -list_devices true -f dshow -i dummy
-```
-
-Use the quoted device name in Audio Settings (e.g. `Microphone (Realtek Audio)`).
-
----
-
-## 6. Clone or copy the project
-
-Copy the project folder to your machine, for example:
-
-```
-C:\Projects\vox_atc_demo
-```
-
-Ensure this file exists:
-
-```
-C:\Projects\vox_atc_demo\python\whisper_server.py
-```
-
-Optional: set `VOX_ATC_ROOT` if the app cannot find the Python script:
-
-```powershell
-setx VOX_ATC_ROOT "C:\Projects\vox_atc_demo"
-```
-
----
-
-## 7. Run the app
-
-```powershell
-cd C:\Projects\vox_atc_demo
+cd C:\path\to\vox_atc_demo
 flutter pub get
 flutter run -d windows
 ```
 
-On first launch:
+On first launch, the Whisper model downloads (~150 MB). Model load may take 1–2 minutes.
 
-- The **Whisper server** starts in the background (model load may take 1–2 minutes the first time)
-- If no microphone is saved in settings, the demo uses the **first DirectShow mic** ffmpeg reports
+Hold **Space** (default push-to-talk key) or use **Hold to Talk** in the UI.
 
----
+### Build a portable Windows package
 
-## 8. Test PTT + transcription
+To create the same self-contained folder as Section 1:
 
-1. Wait until the app window opens and the console shows `SpeechEngine: persistent server ready`
-2. **Press and hold Space** (default hold-to-talk key) — works **globally**, even if another window is focused
-3. Speak an English ATC phrase, for example:
-   - *"Gulf Air 387, hold position"*
-   - *"SVA123, taxi via Alpha, hold short runway 34 Left"*
-4. **Release Space**
-5. Wait 1–2 seconds — transcript appears on screen and in the console
+```powershell
+.\scripts\build_windows_portable.ps1
+```
 
-Alternative: use the **Hold to Talk** button in the demo UI (press and hold with the mouse).
-
-### Configure mic and PTT key (optional)
-
-Open **Audio Settings** in your integrated app (or extend the demo to navigate there). Select:
-
-- **Microphone** — must match a DirectShow device name from ffmpeg
-- **Hold-to-talk key** — default is Space
-- Save settings and restart if you change the PTT key at startup
-
----
-
-## Platform behavior summary
-
-| Component | Windows | macOS (dev) |
-|-----------|---------|-------------|
-| **Audio capture** | ffmpeg `dshow` — `audio={micName}` | ffmpeg `avfoundation` — `:0` |
-| **Mic list** | `AudioDevicesService.listWindowsMics()` | Not used in demo (hardcoded `:0`) |
-| **PTT** | Global `GetAsyncKeyState` polling | In-app `HardwareKeyboard` (window focused) |
-| **Python** | `python3.11` → `python3` → `python` | `python3.11` |
-| **Paths** | Normalized via `path` package (`\` and `/`) | Same |
+Output: `dist\VoxATC-Windows\` and `dist\VoxATC-Windows.zip`
 
 ---
 
 ## Troubleshooting
 
-### `ffmpeg` not found
+### Portable app (Section 1)
 
-**Symptoms:** Empty mic list, `AudioCapture: failed to start ffmpeg`, or `ffmpeg is not recognized`.
+| Problem | Fix |
+|---------|-----|
+| App crashes on startup / exit code `-1073741819` | Run `runtime\Install_VC_Runtime.bat` once, then restart VoxATC |
+| Status shows speech engine failed | Make sure you extracted the **entire** folder. Do not delete `data\`, `python\`, or `runtime\` |
+| "No speech detected" | Check Windows **Settings → Privacy → Microphone** — allow desktop apps. Try a different mic in Audio Settings |
+| Slow first launch | Normal — Whisper loads the model on first run (~30 seconds) |
 
-**Fix:**
-
-1. Confirm `ffmpeg -version` works in a **new** terminal
-2. Add the ffmpeg `bin` folder to **System PATH** (not only User PATH if needed)
-3. Restart the terminal and IDE
-4. Re-run `flutter run -d windows`
+Always start the app with **`Start VoxATC.bat`** (sets paths for bundled Python). You can also run `vox_atc_demo.exe` directly after VC++ runtime is installed.
 
 ---
 
-### Python not found
+### Development (Section 2)
 
-**Symptoms:** `SpeechEngine: Python not found` or `ProcessException: The system cannot find the file specified`.
+| Problem | Fix |
+|---------|-----|
+| `ffmpeg` not found | Add ffmpeg `bin` folder to PATH. Open a **new** terminal and run `ffmpeg -version` |
+| Python not found | Reinstall Python with **Add to PATH**. Run `pip install faster-whisper` |
+| Empty mic list | ffmpeg must be on PATH. List devices: `ffmpeg -list_devices true -f dshow -i dummy` |
+| Whisper timeout / no READY | First run downloads the model — wait 2–5 minutes. Check antivirus is not blocking Python |
+| `flutter doctor` errors | Install Visual Studio **Desktop development with C++** workload. Run `flutter doctor -v` |
+| PTT not working | Space works globally on Windows. Use **Hold to Talk** to test capture without the keyboard |
 
-**Fix:**
-
-1. Run `python --version` or `py -3.11 --version`
-2. Reinstall Python with **Add to PATH** checked
-3. Install faster-whisper: `python -m pip install faster-whisper`
-4. Set `VOX_ATC_ROOT` to the project folder if the script is not found
-5. Restart the app
-
-Manual server test:
+Optional: set `VOX_ATC_ROOT` to your project folder if the app cannot find `python\whisper_server.py`:
 
 ```powershell
-cd C:\Projects\vox_atc_demo
-echo C:\path\to\test.wav | python python\whisper_server.py
-```
-
-Expect `READY` on stderr, then transcript + `<<<END>>>` on stdout.
-
----
-
-### `flutter doctor` errors
-
-| Issue | Fix |
-|-------|-----|
-| Visual Studio not found | Install **Desktop development with C++** workload |
-| Windows desktop disabled | `flutter config --enable-windows-desktop` |
-| Chrome/Android licenses | Not required for Windows desktop |
-| cmdline-tools missing | Ignore for desktop-only work |
-
-Run:
-
-```powershell
-flutter doctor -v
-```
-
----
-
-### No microphone / empty recording
-
-**Symptoms:** `AudioCapture: no microphone configured` or empty transcript.
-
-**Fix:**
-
-1. List devices: `ffmpeg -list_devices true -f dshow -i dummy`
-2. Set the exact device name in Audio Settings (including parentheses)
-3. Or let the demo pick the first device (automatic on Windows when settings are empty)
-4. Check Windows **Privacy → Microphone** — allow desktop apps
-
----
-
-### Whisper server timeout
-
-**Symptoms:** `timed out waiting for READY`, slow first launch.
-
-**Fix:**
-
-1. First run downloads the model — wait 2–5 minutes
-2. Ensure faster-whisper is installed for the Python executable VoxATC selects
-3. Check antivirus is not blocking Python or the Hugging Face cache
-
----
-
-### PTT not detected
-
-**Symptoms:** No `PTT pressed` in console.
-
-**Fix:**
-
-1. On Windows, Space works **globally** — no need to focus the app
-2. Confirm HTT key in Audio Settings (default: Space, keyId 32)
-3. Restart app after changing settings (loaded at startup in demo)
-4. Use the **Hold to Talk** button to verify capture independently of the keyboard
-
----
-
-## Quick verification checklist
-
-```powershell
-flutter doctor
-ffmpeg -version
-python --version
-python -c "from faster_whisper import WhisperModel; print('OK')"
-cd C:\Projects\vox_atc_demo
-flutter pub get
-flutter run -d windows
+setx VOX_ATC_ROOT "C:\path\to\vox_atc_demo"
 ```
 
 ---
@@ -298,4 +130,4 @@ flutter run -d windows
 ## Related docs
 
 - [README.md](README.md) — module overview and integration guide
-- [python/whisper_server.py](python/whisper_server.py) — persistent Whisper server (cross-platform)
+- [scripts/build_windows_portable.ps1](scripts/build_windows_portable.ps1) — portable Windows build script
